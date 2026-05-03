@@ -129,6 +129,81 @@ class _HomePageState extends State<HomePage> {
     if (saved == true) _fetchMedia();
   }
 
+  // Navigasi ke halaman edit
+  Future<void> _goToEditPage(MediaItem item) async {
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => EditMediaPage(item: item)),
+    );
+    if (saved == true) _fetchMedia();
+  }
+
+  // Hapus media dengan konfirmasi
+  Future<void> _deleteMedia(MediaItem item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Hapus Media'),
+        content: Text(
+          'Apakah Anda yakin ingin menghapus "${item.title}"?\nTindakan ini tidak dapat dibatalkan.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Batal'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              'Hapus',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api.php?action=delete&id=${item.id}'),
+      );
+
+      if (response.statusCode == 200) {
+        final body = json.decode(response.body);
+        if (body['success'] == true) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Media berhasil dihapus')),
+            );
+            _fetchMedia();
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Gagal: ${body['message'] ?? 'Unknown error'}'),
+              ),
+            );
+          }
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Server error: ${response.statusCode}')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal menghapus: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -243,7 +318,11 @@ class _HomePageState extends State<HomePage> {
             crossAxisSpacing: 12,
             mainAxisExtent: 300,
           ),
-          itemBuilder: (context, index) => _MediaCard(item: _mediaList[index]),
+          itemBuilder: (context, index) => _MediaCard(
+            item: _mediaList[index],
+            onEdit: () => _goToEditPage(_mediaList[index]),
+            onDelete: () => _deleteMedia(_mediaList[index]),
+          ),
         );
       },
     );
@@ -255,7 +334,14 @@ class _HomePageState extends State<HomePage> {
 // ─────────────────────────────────────────────
 class _MediaCard extends StatelessWidget {
   final MediaItem item;
-  const _MediaCard({required this.item});
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  const _MediaCard({
+    required this.item,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
   String get _sourceLabel => 'Video Database';
 
@@ -268,11 +354,12 @@ class _MediaCard extends StatelessWidget {
       elevation: 2,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      child: InkWell(
+      child: GestureDetector(
         onTap: () => Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => VideoPlayerPage(item: item)),
         ),
+        onLongPress: () => _showContextMenu(context),
         child: LayoutBuilder(
           builder: (context, constraints) {
             final double imageHeight = constraints.maxHeight - _infoHeight;
@@ -350,6 +437,60 @@ class _MediaCard extends StatelessWidget {
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+
+  void _showContextMenu(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFD6DFEA),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.edit,
+                  color: Color(0xFF0B5D7A),
+                ),
+                title: const Text('Edit'),
+                onTap: () {
+                  Navigator.pop(context);
+                  onEdit();
+                },
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.delete,
+                  color: Color(0xFFDC2626),
+                ),
+                title: const Text(
+                  'Hapus',
+                  style: TextStyle(color: Color(0xFFDC2626)),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  onDelete();
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -659,6 +800,358 @@ class _AddMediaPageState extends State<AddMediaPage> {
                       )
                     : const Text(
                         'Simpan',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _label(String text) => Text(
+    text,
+    style: const TextStyle(
+      color: Color(0xFF334155),
+      fontSize: 13,
+      fontWeight: FontWeight.w600,
+    ),
+  );
+
+  InputDecoration _inputDecoration(String hint) => InputDecoration(
+    hintText: hint,
+    hintStyle: const TextStyle(color: Color(0xFF94A3B8)),
+    filled: true,
+    fillColor: Colors.white,
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: Color(0xFFD6DFEA)),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: Color(0xFFD6DFEA)),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: Color(0xFF0B5D7A)),
+    ),
+  );
+}
+
+// ═══════════════════════════════════════════
+//  EDIT MEDIA PAGE – Form Edit Data
+// ═══════════════════════════════════════════
+class EditMediaPage extends StatefulWidget {
+  final MediaItem item;
+  const EditMediaPage({super.key, required this.item});
+
+  @override
+  State<EditMediaPage> createState() => _EditMediaPageState();
+}
+
+class _EditMediaPageState extends State<EditMediaPage> {
+  late final TextEditingController _titleController;
+  XFile? _thumbnailFile;
+  XFile? _videoFile;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController = TextEditingController(text: widget.item.title);
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    super.dispose();
+  }
+
+  // Pilih gambar dari galeri
+  Future<void> _pickThumbnail() async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 80,
+    );
+    if (picked != null) {
+      setState(() => _thumbnailFile = picked);
+    }
+  }
+
+  // Pilih file video
+  Future<void> _pickVideo() async {
+    final picker = ImagePicker();
+    final picked = await picker.pickVideo(source: ImageSource.gallery);
+    if (picked != null) {
+      setState(() => _videoFile = picked);
+    }
+  }
+
+  // Update data ke server
+  Future<void> _save() async {
+    final title = _titleController.text.trim();
+
+    if (title.isEmpty) {
+      _showSnack('Title tidak boleh kosong!');
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/api.php?action=update&id=${widget.item.id}'),
+      );
+      request.fields['title'] = title;
+
+      // Jika thumbnail dipilih, upload yang baru
+      if (_thumbnailFile != null) {
+        final thumbnailBytes = await _thumbnailFile!.readAsBytes();
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'thumbnail',
+            thumbnailBytes,
+            filename: _thumbnailFile!.name,
+          ),
+        );
+      }
+
+      // Jika video dipilih, upload yang baru
+      if (_videoFile != null) {
+        final videoBytes = await _videoFile!.readAsBytes();
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'video',
+            videoBytes,
+            filename: _videoFile!.name,
+          ),
+        );
+      }
+
+      final streamed = await request.send().timeout(
+        const Duration(seconds: 15),
+      );
+      final response = await http.Response.fromStream(streamed);
+
+      if (response.statusCode == 200) {
+        final body = json.decode(response.body);
+        if (body['success'] == true) {
+          if (mounted) Navigator.pop(context, true);
+        } else {
+          _showSnack('Gagal: ${body['message'] ?? 'Unknown error'}');
+        }
+      } else {
+        _showSnack('Server error: ${response.statusCode}');
+      }
+    } catch (e) {
+      _showSnack('Koneksi gagal: $e');
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  void _showSnack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF4F7FB),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFF4F7FB),
+        foregroundColor: const Color(0xFF1F2937),
+        elevation: 0,
+        centerTitle: true,
+        title: const Text('Edit Media'),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // ── Field Title ──
+            _label('Title'),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _titleController,
+              style: const TextStyle(color: Color(0xFF1F2937)),
+              decoration: _inputDecoration('Masukkan judul video'),
+            ),
+            const SizedBox(height: 20),
+
+            // ── Pilih Thumbnail (Opsional) ──
+            _label('Thumbnail (Opsional - Biarkan kosong jika tidak ingin ubah)'),
+            const SizedBox(height: 6),
+            GestureDetector(
+              onTap: _pickThumbnail,
+              child: Container(
+                height: 180,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFD6DFEA)),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: _thumbnailFile != null
+                    ? Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          FutureBuilder<Uint8List>(
+                            future: _thumbnailFile!.readAsBytes(),
+                            builder: (context, snapshot) {
+                              if (snapshot.hasData) {
+                                return Image.memory(
+                                  snapshot.data!,
+                                  fit: BoxFit.cover,
+                                );
+                              } else if (snapshot.hasError) {
+                                return const Center(
+                                  child: Icon(
+                                    Icons.error_outline,
+                                    color: Colors.redAccent,
+                                    size: 40,
+                                  ),
+                                );
+                              }
+                              return const Center(
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              );
+                            },
+                          ),
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.black54,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              padding: const EdgeInsets.all(4),
+                              child: const Icon(
+                                Icons.edit,
+                                color: Colors.white,
+                                size: 18,
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: const [
+                          Icon(
+                            Icons.image,
+                            size: 52,
+                            color: Color(0xFF0B5D7A),
+                          ),
+                          SizedBox(height: 8),
+                          Text(
+                            'Tap untuk ubah gambar',
+                            style: TextStyle(color: Color(0xFF64748B)),
+                          ),
+                        ],
+                      ),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // ── Pilih File Video (Opsional) ──
+            _label('File Video (Opsional - Biarkan kosong jika tidak ingin ubah)'),
+            const SizedBox(height: 6),
+            GestureDetector(
+              onTap: _pickVideo,
+              child: Container(
+                height: 56,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFD6DFEA)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _videoFile == null
+                                  ? 'Tap untuk ubah video'
+                                  : 'File terpilih',
+                              style: TextStyle(
+                                color: _videoFile == null
+                                    ? const Color(0xFF64748B)
+                                    : const Color(0xFF475569),
+                                fontSize: 12,
+                              ),
+                            ),
+                            if (_videoFile != null)
+                              Text(
+                                _videoFile!.name,
+                                style: const TextStyle(
+                                  color: Color(0xFF1F2937),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Icon(
+                        _videoFile == null
+                            ? Icons.video_library_outlined
+                            : Icons.check_circle,
+                        color: _videoFile == null
+                            ? const Color(0xFF0B5D7A)
+                            : const Color(0xFF16A34A),
+                        size: 24,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 32),
+
+            // ── Tombol Simpan ──
+            SizedBox(
+              height: 50,
+              child: ElevatedButton(
+                onPressed: _isSaving ? null : _save,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0B5D7A),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: _isSaving
+                    ? const SizedBox(
+                        height: 22,
+                        width: 22,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : const Text(
+                        'Perbarui',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
