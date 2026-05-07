@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
 
@@ -11,7 +13,52 @@ import 'package:video_player/video_player.dart';
 // Emulator Android  → 10.0.2.2
 // Device Fisik      → ganti dengan IP komputer, misal 192.168.1.x
 // ─────────────────────────────────────────────
-const String baseUrl = 'http://127.0.0.1/tugas-232013';
+const String baseUrl = 'https://tugas-232013-production.up.railway.app';
+
+// ─────────────────────────────────────────────
+// HELPER: Buat MultipartFile yang kompatibel (REVISI FINAL)
+// ─────────────────────────────────────────────
+Future<http.MultipartFile> buildMultipartFile(
+  XFile file,
+  String fieldName,
+) async {
+  final ext = file.name.split('.').last.toLowerCase();
+
+  // Tentukan MIME type
+  String mimeType;
+  String mimeSubtype;
+  if (['jpg', 'jpeg', 'png', 'webp', 'gif'].contains(ext)) {
+    mimeType = 'image';
+    mimeSubtype = ext == 'jpg' ? 'jpeg' : ext;
+  } else {
+    mimeType = 'video';
+    mimeSubtype = ext;
+  }
+  final contentType = MediaType(mimeType, mimeSubtype);
+
+  if (kIsWeb) {
+    // FLUTTER WEB SOLUSI: Gunakan Stream (openRead) agar tidak 0 Byte
+    // Ini akan membaca file secara bertahap tanpa membuat RAM browser jebol
+    final stream = file.openRead();
+    final length = await file.length();
+    
+    return http.MultipartFile(
+      fieldName,
+      stream,
+      length,
+      filename: file.name,
+      contentType: contentType,
+    );
+  } else {
+    // Mobile/Desktop: pakai fromPath (efisien, tidak load ke RAM)
+    return await http.MultipartFile.fromPath(
+      fieldName,
+      file.path,
+      filename: file.name,
+      contentType: contentType,
+    );
+  }
+}
 
 void main() {
   runApp(const MyApp());
@@ -67,6 +114,11 @@ class MediaItem {
   String get thumbnailUrl => thumbnail.startsWith('http')
       ? thumbnail
       : '$baseUrl/thumbnail/$thumbnail';
+
+  /// URL lengkap video dari server
+  String get videoUrl => video.startsWith('http')
+      ? video
+      : '$baseUrl/video/$video';
 }
 
 // ═══════════════════════════════════════════
@@ -100,7 +152,7 @@ class _HomePageState extends State<HomePage> {
     try {
       final response = await http
           .get(Uri.parse('$baseUrl/api.php?action=list'))
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 200) {
         final List<dynamic> data = json.decode(response.body);
@@ -565,25 +617,11 @@ class _AddMediaPageState extends State<AddMediaPage> {
         Uri.parse('$baseUrl/api.php?action=add'),
       );
       request.fields['title'] = title;
-      final thumbnailBytes = await _thumbnailFile!.readAsBytes();
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'thumbnail',
-          thumbnailBytes,
-          filename: _thumbnailFile!.name,
-        ),
-      );
-      final videoBytes = await _videoFile!.readAsBytes();
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'video',
-          videoBytes,
-          filename: _videoFile!.name,
-        ),
-      );
+      request.files.add(await buildMultipartFile(_thumbnailFile!, 'thumbnail'));
+      request.files.add(await buildMultipartFile(_videoFile!, 'video'));
 
       final streamed = await request.send().timeout(
-        const Duration(seconds: 15),
+        const Duration(minutes: 5),
       );
       final response = await http.Response.fromStream(streamed);
 
@@ -912,30 +950,16 @@ class _EditMediaPageState extends State<EditMediaPage> {
 
       // Jika thumbnail dipilih, upload yang baru
       if (_thumbnailFile != null) {
-        final thumbnailBytes = await _thumbnailFile!.readAsBytes();
-        request.files.add(
-          http.MultipartFile.fromBytes(
-            'thumbnail',
-            thumbnailBytes,
-            filename: _thumbnailFile!.name,
-          ),
-        );
+        request.files.add(await buildMultipartFile(_thumbnailFile!, 'thumbnail'));
       }
 
       // Jika video dipilih, upload yang baru
       if (_videoFile != null) {
-        final videoBytes = await _videoFile!.readAsBytes();
-        request.files.add(
-          http.MultipartFile.fromBytes(
-            'video',
-            videoBytes,
-            filename: _videoFile!.name,
-          ),
-        );
+        request.files.add(await buildMultipartFile(_videoFile!, 'video'));
       }
 
       final streamed = await request.send().timeout(
-        const Duration(seconds: 15),
+        const Duration(minutes: 5),
       );
       final response = await http.Response.fromStream(streamed);
 
@@ -1214,7 +1238,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     super.initState();
     // Tetap memakai URL video dari database
     _controller = VideoPlayerController.networkUrl(
-      Uri.parse(widget.item.video),
+      Uri.parse(widget.item.videoUrl),
     );
     _initializeVideoPlayerFuture = _controller.initialize().then((_) {
       _controller.addListener(() {
